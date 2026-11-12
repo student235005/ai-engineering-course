@@ -85,7 +85,7 @@ NAMESPACE = uuid.UUID("6f8a9c2e-3d51-4b7a-9f10-2c4d6e8b0a13")
 # TODO 2 (подбирается в практике 2, после первого замера): размер куска
 # и нахлёст. Начни с этих значений, поменяешь их позже — когда увидишь,
 # сколько вопросов находится.
-CHUNK_SIZE = 600
+CHUNK_SIZE = 300
 OVERLAP = 150
 
 
@@ -113,8 +113,23 @@ def chunk_text(text: str, size: int, overlap: int) -> list:
     Проверить себя: chunk_text('абвгд'*100, 200, 50) -> 4 куска
     длиной 200, 200, 200 и 50 символов.
     """
-    return [text]
+    if overlap >= size:
+        raise ValueError(
+            f"overlap ({overlap}) должен быть меньше size ({size}): "
+            f"иначе шаг окна нулевой и нарезка зациклится"
+        )
 
+    chunks = []
+    step = size - overlap
+    start = 0
+
+    while start < len(text):
+        piece = text[start:start + size]
+        if piece.strip():
+            chunks.append(piece)
+        start += step
+
+    return chunks
 
 # ====================================================================
 #  КОД НИЖЕ УЖЕ РАБОТАЕТ — менять не нужно
