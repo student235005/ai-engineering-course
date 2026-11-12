@@ -115,6 +115,19 @@ def classify(question: dict, hits, result: dict) -> str:
       5) Иначе -> ok
     """
     # TODO 1: замени заглушку на реализацию по шагам выше
+
+    answer = result["answer"]
+    if not question["in_corpus"]:
+        return "ok" if answer == REFUSAL_TEXT else "hallucination"
+    if answer == REFUSAL_TEXT:
+        return "over_refusal"
+    sources = result.get("sources") or []
+    expected = question.get("expected") or []
+    if expected and not any(doc in sources for doc in expected):
+        return "retrieval_error"
+    must = (question.get("must_contain") or "").lower()
+    if must and must not in answer.lower():
+        return "generation_error"
     return "ok"
 
 
@@ -137,13 +150,21 @@ def llm_judge(question: str, context: str, answer_text: str) -> dict:
       overall_verdict, reason
     """
     # TODO 2: замени заглушку на реальный вызов судьи
-    return {
-        "answer_relevance": "low",
-        "context_relevance": "low",
-        "answer_faithfulness": "low",
-        "overall_verdict": "error",
-        "reason": "TODO 2: llm_judge не реализован",
-    }
+    creds = os.getenv("GIGACHAT_CREDENTIALS", "").strip().strip("'\"")
+    scope = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+    user_msg = f"ВОПРОС: {question}\n\nКОНТЕКСТ:\n{context}\n\nОТВЕТ: {answer_text}"
+    try:
+        with GigaChat(credentials=creds, scope=scope, verify_ssl_certs=False) as gc:
+            resp = gc.chat({
+                "messages": [
+                    {"role": "system", "content": JUDGE_SYSTEM},
+                    {"role": "user",   "content": user_msg},
+                ]
+            })
+        raw = resp.choices[0].message.content.strip()
+        return json.loads(raw)
+    except Exception as e:
+        return {"overall_verdict": "error", "reason": str(e)}
 
 
 # ====================================================================
@@ -328,13 +349,27 @@ def sweep_chunking(client, model, alias: str):
     Разметка и судья могут расходиться: разметка проверяет, есть ли нужная
     строка в ответе; судья оценивает, насколько ответ полезен и честен.
     """
+
     in_corpus_total = sum(1 for q in QUESTIONS if q["in_corpus"])
     col = f"{'Размер чанка / перекрытие':<26}"
     print(f"\n  {col} | {'чанков':>7} | {'✓ по разметке':>14} | {'✓ по судье':>10}")
     print("  " + _SEP[:72])
     original = (ingestion.CHUNK_SIZE, ingestion.OVERLAP)
-    # TODO 3: перебор здесь
+    for size, overlap in CHUNK_COMBOS:
+        ingestion.CHUNK_SIZE = size
+        ingestion.OVERLAP = overlap
+        manifest, _ = ingestion.build_index(client, model)
+        counts = run_eval(client, model, alias, verbose=False)
+        markup_ok = counts["markup"].get("ok", 0)
+        judge_ok  = counts["judge"].get("ok", 0)
+        label = f"{size} / {overlap}"
+        print(
+            f"  {label:<26} | {manifest['chunks']:>7} | "
+            f"  {markup_ok} / {in_corpus_total:>3}    | "
+            f"  {judge_ok} / {in_corpus_total}"
+        )
     ingestion.CHUNK_SIZE, ingestion.OVERLAP = original
+    ingestion.build_index(client, model)
 
 
 # ====================================================================
@@ -360,7 +395,23 @@ def resolve_conflicts(hits):
     (строки ГГГГ-ММ-ДД сравниваются как даты), остальные выбросить.
     Порядок и score оставшихся точек не менять.
     """
-    return hits
+    def base_id(doc_id: str) -> str:
+        return doc_id[:-4] if doc_id.endswith("-OLD") else doc_id
+
+    best_date = {}
+    best_doc = {}
+    for h in hits:
+        p = h.payload
+        key = base_id(p["doc_id"])
+        date = p.get("date") or ""
+        if key not in best_date or date > best_date[key]:
+            best_date[key] = date
+            best_doc[key] = p["doc_id"]
+
+    return [
+        h for h in hits
+        if h.payload["doc_id"] == best_doc[base_id(h.payload["doc_id"])]
+    ]
 
 
 def demo_conflict(client, model, alias: str):
