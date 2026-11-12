@@ -1,0 +1,13 @@
+{
+  "alias": "promtech",
+  "collection": "promtech_chunks_20261112_122008",
+  "built_at": "2026-11-12 12:20:11",
+  "model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "vector_size": 384,
+  "chunk_size": 300,
+  "overlap": 150,
+  "documents": 28,
+  "records": 171,
+  "chunks": 2585,
+  "corpus_fingerprint": "b4de8796435e624b"
+}
